@@ -1,4 +1,3 @@
-import { marked } from "marked";
 import {
   Document,
   Packer,
@@ -14,6 +13,7 @@ import {
 } from "docx";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { markdownToHtml, decodeEntities } from "./convert";
 
 export async function exportMarkdown(content: string, defaultName: string) {
   const path = await save({
@@ -25,15 +25,16 @@ export async function exportMarkdown(content: string, defaultName: string) {
 }
 
 export async function exportDocx(markdown: string, defaultName: string) {
-  const html = marked.parse(markdown, { async: false }) as string;
+  const html = markdownToHtml(markdown);
 
   const parsed = new DOMParser().parseFromString(html, "text/html");
-  const children = parsed.body.children;
+  const children = Array.from(parsed.body.children) as HTMLElement[];
 
   const items: (Paragraph | Table)[] = [];
 
   for (const el of children) {
-    switch (el.tagName.toLowerCase()) {
+    const tag = el.tagName.toLowerCase();
+    switch (tag) {
       case "h1":
         items.push(
           new Paragraph({
@@ -157,6 +158,71 @@ export async function exportDocx(markdown: string, defaultName: string) {
         items.push(new Paragraph({ spacing: { after: 120 } }));
         break;
       }
+      case "div": {
+        // Handle mermaid and math blocks (rendered as divs with data attributes)
+        if (el.classList.contains("mermaid-node") && el.dataset.chart) {
+          items.push(
+            new Paragraph({
+              spacing: { before: 120, after: 120 },
+              children: [
+                new TextRun({
+                  text: "[Mermaid Diagram]",
+                  bold: true,
+                  color: "555555",
+                }),
+              ],
+            })
+          );
+          items.push(
+            new Paragraph({
+              spacing: { after: 60 },
+              children: [
+                new TextRun({
+                  text: decodeEntities(el.dataset.chart),
+                  font: "Courier New",
+                  size: 18,
+                  color: "333333",
+                }),
+              ],
+            })
+          );
+        } else if (el.classList.contains("math-block") && el.dataset.latex) {
+          items.push(
+            new Paragraph({
+              spacing: { before: 120, after: 120 },
+              alignment: "center",
+              children: [
+                new TextRun({
+                  text: `$$${decodeEntities(el.dataset.latex)}$$`,
+                  font: "Courier New",
+                  size: 20,
+                  color: "333333",
+                }),
+              ],
+            })
+          );
+        }
+        break;
+      }
+      case "span": {
+        // Handle inline math
+        if (el.classList.contains("math-inline") && el.dataset.latex) {
+          items.push(
+            new Paragraph({
+              spacing: { after: 0 },
+              children: [
+                new TextRun({
+                  text: `$${decodeEntities(el.dataset.latex)}$`,
+                  font: "Courier New",
+                  size: 20,
+                  color: "333333",
+                }),
+              ],
+            })
+          );
+        }
+        break;
+      }
     }
   }
 
@@ -183,7 +249,7 @@ export async function exportDocx(markdown: string, defaultName: string) {
 }
 
 export async function exportPdf(markdown: string) {
-  const html = marked.parse(markdown, { async: false }) as string;
+  const html = markdownToHtml(markdown);
 
   const printFrame = document.createElement("iframe");
   printFrame.style.position = "fixed";
@@ -202,40 +268,92 @@ export async function exportPdf(markdown: string) {
     throw new Error("Could not create print preview");
   }
 
+  // Load KaTeX CSS and Mermaid from CDN in the iframe
   doc.open();
   doc.write(`<!DOCTYPE html>
 <html>
 <head>
-<style>
-  @page { size: A4; margin: 1in; }
-  body { font-family: 'Calibri', 'Helvetica', Arial, sans-serif; font-size: 12pt; line-height: 1.5; color: #000; padding: 40px; }
-  h1 { font-size: 20pt; margin: 16pt 0 8pt; }
-  h2 { font-size: 16pt; margin: 14pt 0 8pt; }
-  h3 { font-size: 14pt; margin: 12pt 0 6pt; }
-  p { margin: 0 0 8pt; }
-  blockquote { margin: 8pt 0; padding: 4pt 12pt; border-left: 3px solid #ccc; color: #555; }
-  pre { background: #f5f5f5; padding: 8pt; font-size: 10pt; border-radius: 3px; }
-  code { background: #f5f5f5; padding: 1pt 4pt; font-size: 10pt; }
-  table { border-collapse: collapse; width: 100%; margin: 8pt 0; }
-  th, td { border: 1px solid #ccc; padding: 4pt 8pt; text-align: left; }
-  th { background: #f0f0f0; }
-  img { max-width: 100%; }
-  ul, ol { margin: 4pt 0; padding-left: 24pt; }
-  .katex { font-size: 1.1em; }
-  @media print {
-    body { padding: 0; }
-  }
-  .print-btn { position: fixed; bottom: 24px; right: 24px; z-index: 10000; }
-  .print-btn button { padding: 10px 24px; font-size: 14px; background: #c084fc; color: #000; border: none; border-radius: 6px; cursor: pointer; }
-  .print-btn button:hover { background: #a855f7; }
-  .close-btn { position: fixed; top: 16px; right: 16px; z-index: 10000; }
-  .close-btn button { padding: 6px 16px; font-size: 13px; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-</style>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.6.0/dist/mermaid.esm.min.mjs" type="module"></script>
+  <style>
+    @page { size: A4; margin: 1in; }
+    body { font-family: 'Calibri', 'Helvetica', Arial, sans-serif; font-size: 12pt; line-height: 1.5; color: #000; padding: 40px; }
+    h1 { font-size: 20pt; margin: 16pt 0 8pt; }
+    h2 { font-size: 16pt; margin: 14pt 0 8pt; }
+    h3 { font-size: 14pt; margin: 12pt 0 6pt; }
+    p { margin: 0 0 8pt; }
+    blockquote { margin: 8pt 0; padding: 4pt 12pt; border-left: 3px solid #ccc; color: #555; }
+    pre { background: #f5f5f5; padding: 8pt; font-size: 10pt; border-radius: 3px; }
+    code { background: #f5f5f5; padding: 1pt 4pt; font-size: 10pt; }
+    table { border-collapse: collapse; width: 100%; margin: 8pt 0; }
+    th, td { border: 1px solid #ccc; padding: 4pt 8pt; text-align: left; }
+    th { background: #f0f0f0; }
+    img { max-width: 100%; }
+    ul, ol { margin: 4pt 0; padding-left: 24pt; }
+    .katex { font-size: 1.1em; }
+    .mermaid { text-align: center; }
+    .math-block { text-align: center; margin: 12pt 0; }
+    .math-inline { display: inline; }
+    @media print {
+      body { padding: 0; }
+      .print-btn, .close-btn { display: none; }
+    }
+    .print-btn { position: fixed; bottom: 24px; right: 24px; z-index: 10000; }
+    .print-btn button { padding: 10px 24px; font-size: 14px; background: #c084fc; color: #000; border: none; border-radius: 6px; cursor: pointer; }
+    .print-btn button:hover { background: #a855f7; }
+    .close-btn { position: fixed; top: 16px; right: 16px; z-index: 10000; }
+    .close-btn button { padding: 6px 16px; font-size: 13px; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+  </style>
 </head>
 <body>
   <div class="close-btn"><button onclick="window.parent.document.body.removeChild(window.frameElement)">Close</button></div>
   <div class="print-btn"><button onclick="window.print()">Print / Save as PDF</button></div>
-  ${html}
+  <div id="content">${html}</div>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11.6.0/dist/mermaid.esm.min.mjs';
+    
+    // Initialize mermaid
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'default',
+      securityLevel: 'loose',
+      themeVariables: {
+        fontSize: '14px',
+      },
+    });
+
+    // Render mermaid diagrams
+    const mermaidNodes = document.querySelectorAll('.mermaid-node');
+    for (const node of mermaidNodes) {
+      const chart = node.dataset.chart;
+      if (chart) {
+        node.className = 'mermaid';
+        node.textContent = chart;
+      }
+    }
+    
+    try {
+      await mermaid.run({ nodes: document.querySelectorAll('.mermaid') });
+    } catch (err) {
+      console.error('Mermaid error:', err);
+    }
+
+    // Render KaTeX math
+    if (window.renderMathInElement) {
+      window.renderMathInElement(document.body, {
+        delimiters: [
+          { left: '$$', right: '$$', display: true },
+          { left: '$', right: '$', display: false },
+          { left: '\\\\\[', right: '\\\\\]', display: true },
+          { left: '\\\\(', right: '\\\\)', display: false },
+        ],
+        throwOnError: false,
+      });
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" integrity="sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js" integrity="sha384-+XBljXPPiv+OzfbB3cVmLHf4hdUFHlWNZN5spNQ7rmHTXpd7WvJum6fIACpNNfIR" crossorigin="anonymous"></script>
 </body>
 </html>`);
   doc.close();

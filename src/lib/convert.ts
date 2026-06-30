@@ -96,10 +96,10 @@ function encodeEntities(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
-function decodeEntities(s: string): string {
+export function decodeEntities(s: string): string {
   return s
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&");
+    .replace(/"/g, '"')
+    .replace(/</g, "<")
+    .replace(/>/g, ">")
+    .replace(/&/g, "&");
 }

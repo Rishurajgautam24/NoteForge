@@ -46,7 +46,6 @@ export const MathBlock = Node.create<MathBlockOptions>({
         "data-latex": node.attrs.latex,
         class: "math-block",
       }),
-      0,
     ];
   },
 

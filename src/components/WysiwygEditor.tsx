@@ -14,19 +14,12 @@ import { TableHeader } from "@tiptap/extension-table-header";
 import Highlight from "@tiptap/extension-highlight";
 import { NodeViewWrapper } from "@tiptap/react";
 import { useCallback, useEffect, useState, useRef } from "react";
-import katex from "katex";
-import mermaid from "mermaid";
 import { MathInline } from "../extensions/MathInline";
 import { MathBlock } from "../extensions/MathBlock";
 import { Mermaid as MermaidExt } from "../extensions/Mermaid";
 import { markdownToHtml, htmlToMarkdown } from "../lib/convert";
+import { loadKatex, loadMermaid } from "../lib/renderEngines";
 import Toolbar from "./Toolbar";
-
-mermaid.initialize({
-  startOnLoad: false,
-  theme: "dark",
-  securityLevel: "loose",
-});
 
 interface WysiwygEditorProps {
   content: string;
@@ -37,6 +30,7 @@ function MathInlineNode(props: any) {
   const latex = props.node.attrs.latex;
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(latex);
+  const [renderedHtml, setRenderedHtml] = useState(latex);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -53,15 +47,30 @@ function MathInlineNode(props: any) {
     setEditing(false);
   };
 
-  const html = editing
-    ? ""
-    : (() => {
-        try {
-          return katex.renderToString(latex, { displayMode: false, throwOnError: false });
-        } catch {
-          return latex;
+  useEffect(() => {
+    if (editing) return;
+    let cancelled = false;
+
+    loadKatex()
+      .then((katex) => {
+        if (cancelled) return;
+        setRenderedHtml(
+          katex.renderToString(latex, {
+            displayMode: false,
+            throwOnError: false,
+          })
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRenderedHtml(latex);
         }
-      })();
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [editing, latex]);
 
   return (
     <NodeViewWrapper className="math-inline-wrapper" as="span">
@@ -81,7 +90,7 @@ function MathInlineNode(props: any) {
         <span
           className="math-rendered"
           onClick={() => { setValue(latex); setEditing(true); }}
-          dangerouslySetInnerHTML={{ __html: html }}
+          dangerouslySetInnerHTML={{ __html: renderedHtml }}
         />
       )}
     </NodeViewWrapper>
@@ -92,6 +101,7 @@ function MathBlockNode(props: any) {
   const latex = props.node.attrs.latex;
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(latex);
+  const [renderedHtml, setRenderedHtml] = useState(latex);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -108,15 +118,30 @@ function MathBlockNode(props: any) {
     setEditing(false);
   };
 
-  const html = editing
-    ? ""
-    : (() => {
-        try {
-          return katex.renderToString(latex, { displayMode: true, throwOnError: false });
-        } catch {
-          return latex;
+  useEffect(() => {
+    if (editing) return;
+    let cancelled = false;
+
+    loadKatex()
+      .then((katex) => {
+        if (cancelled) return;
+        setRenderedHtml(
+          katex.renderToString(latex, {
+            displayMode: true,
+            throwOnError: false,
+          })
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRenderedHtml(latex);
         }
-      })();
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [editing, latex]);
 
   return (
     <NodeViewWrapper className="math-block-wrapper" as="div">
@@ -136,7 +161,7 @@ function MathBlockNode(props: any) {
         <div
           className="math-rendered math-rendered-block"
           onClick={() => { setValue(latex); setEditing(true); }}
-          dangerouslySetInnerHTML={{ __html: html }}
+          dangerouslySetInnerHTML={{ __html: renderedHtml }}
         />
       )}
     </NodeViewWrapper>
@@ -159,15 +184,28 @@ function MermaidNode(props: any) {
 
   useEffect(() => {
     if (editing || !containerRef.current || !chart) return;
+    let cancelled = false;
     setError(null);
-    containerRef.current.innerHTML = "";
-    const sourceDiv = document.createElement("div");
-    sourceDiv.className = "mermaid";
-    sourceDiv.textContent = chart;
-    containerRef.current.appendChild(sourceDiv);
-    mermaid.run({ nodes: [sourceDiv] }).catch((e) => {
-      setError(String(e));
-    });
+
+    loadMermaid({ theme: "dark" })
+      .then((mermaid) => {
+        if (cancelled || !containerRef.current) return;
+        containerRef.current.innerHTML = "";
+        const sourceDiv = document.createElement("div");
+        sourceDiv.className = "mermaid";
+        sourceDiv.textContent = chart;
+        containerRef.current.appendChild(sourceDiv);
+        return mermaid.run({ nodes: [sourceDiv] });
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setError(String(e));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [chart, editing]);
 
   const commit = () => {
@@ -255,15 +293,18 @@ export default function WysiwygEditor({ content, onChange }: WysiwygEditorProps)
 
   useEffect(() => {
     if (!editor) return;
-    if (content && lastContent.current !== content) {
+    if (content !== lastContent.current) {
       lastContent.current = content;
       try {
         skipNextUpdate.current = true;
         editor.commands.setContent(markdownToHtml(content));
       } catch (e) {
         console.error("WYSIWYG setContent error:", e);
-        skipNextUpdate.current = true;
-        editor.commands.setContent(`<p>${content}</p>`);
+        try {
+          editor.commands.setContent(`<p>${content}</p>`);
+        } catch {
+          skipNextUpdate.current = false;
+        }
       }
     }
   }, [editor, content]);

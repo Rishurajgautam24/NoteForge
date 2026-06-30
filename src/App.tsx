@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState, useRef } from "react";
+import { useEffect, useCallback, useState, useRef, lazy, Suspense } from "react";
 import { useStore } from "./store/useStore";
 import {
   listVault,
@@ -8,12 +8,12 @@ import {
   createDirectory,
   openVaultDialog,
 } from "./lib/ipc";
-import { exportMarkdown, exportDocx, exportPdf } from "./lib/export";
 import Sidebar from "./components/Sidebar";
-import WysiwygEditor from "./components/WysiwygEditor";
-import EditorPane from "./components/EditorPane";
-import PreviewPane from "./components/PreviewPane";
 import "./App.css";
+
+const WysiwygEditor = lazy(() => import("./components/WysiwygEditor"));
+const EditorPane = lazy(() => import("./components/EditorPane"));
+const PreviewPane = lazy(() => import("./components/PreviewPane"));
 
 const LS_VAULT = "noteforge:vaultPath";
 const LS_FILE = "noteforge:filePath";
@@ -45,6 +45,7 @@ function App() {
       if (!activeFilePath || !activeFileContent) return;
       const name = activeFilePath.split("/").pop() || "note";
       try {
+        const { exportMarkdown, exportDocx, exportPdf } = await import("./lib/export");
         if (format === "md") {
           await exportMarkdown(activeFileContent, name);
           setStatusText("Exported as Markdown ✓");
@@ -52,7 +53,7 @@ function App() {
           await exportDocx(activeFileContent, name);
           setStatusText("Exported as DOCX ✓");
         } else {
-          exportPdf(activeFileContent);
+          await exportPdf(activeFileContent);
           setStatusText("PDF print dialog opened");
         }
         setTimeout(() => setStatusText(`Editing: ${name}`), 2000);
@@ -198,17 +199,15 @@ function App() {
 
   return (
     <div className="app">
-      <div className="sidebar">
-        <Sidebar
-          files={fileTree}
-          vaultPath={vaultPath}
-          activeFilePath={activeFilePath}
-          onFileSelect={handleFileSelect}
-          onNewFile={handleNewFile}
-          onNewFolder={handleNewFolder}
-          onOpenVault={handleOpenVault}
-        />
-      </div>
+      <Sidebar
+        files={fileTree}
+        vaultPath={vaultPath}
+        activeFilePath={activeFilePath}
+        onFileSelect={handleFileSelect}
+        onNewFile={handleNewFile}
+        onNewFolder={handleNewFolder}
+        onOpenVault={handleOpenVault}
+      />
       <div className="main-area">
         <div className="toolbar">
           <div className="toolbar-left">
@@ -273,20 +272,28 @@ function App() {
               </div>
             </div>
           ) : viewMode === "edit" ? (
-            <WysiwygEditor
-              content={activeFileContent}
-              onChange={handleEditorChange}
-            />
-          ) : viewMode === "split" ? (
-            <div className="split-panes">
-              <EditorPane
+            <Suspense fallback={<div className="preview-pane preview-empty"><p>Loading editor...</p></div>}>
+              <WysiwygEditor
                 content={activeFileContent}
                 onChange={handleEditorChange}
               />
-              <PreviewPane content={activeFileContent} />
+            </Suspense>
+          ) : viewMode === "split" ? (
+            <div className="split-panes">
+              <Suspense fallback={<div className="preview-pane preview-empty"><p>Loading editor...</p></div>}>
+                <EditorPane
+                  content={activeFileContent}
+                  onChange={handleEditorChange}
+                />
+              </Suspense>
+              <Suspense fallback={<div className="preview-pane preview-empty"><p>Loading preview...</p></div>}>
+                <PreviewPane content={activeFileContent} />
+              </Suspense>
             </div>
           ) : (
-            <PreviewPane content={activeFileContent} />
+            <Suspense fallback={<div className="preview-pane preview-empty"><p>Loading preview...</p></div>}>
+              <PreviewPane content={activeFileContent} />
+            </Suspense>
           )}
         </div>
       </div>

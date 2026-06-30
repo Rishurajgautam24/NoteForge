@@ -3,23 +3,12 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
-import "katex/dist/katex.min.css";
 import MermaidRenderer from "./MermaidRenderer";
 import { isValidElement } from "react";
+import { normalizeLatexDelimiters } from "../lib/markdownArtifacts";
 
 interface PreviewPaneProps {
   content: string;
-}
-
-function preprocessLatex(source: string): string {
-  let result = source;
-  result = result.replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner: string) => {
-    return "$$\n" + inner.trim() + "\n$$";
-  });
-  result = result.replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner: string) => {
-    return "$" + inner.trim() + "$";
-  });
-  return result;
 }
 
 export default function PreviewPane({ content }: PreviewPaneProps) {
@@ -31,7 +20,7 @@ export default function PreviewPane({ content }: PreviewPaneProps) {
     );
   }
 
-  const processed = preprocessLatex(content);
+  const processed = normalizeLatexDelimiters(content);
 
   return (
     <div className="preview-pane">
@@ -40,7 +29,8 @@ export default function PreviewPane({ content }: PreviewPaneProps) {
         rehypePlugins={[rehypeKatex, rehypeRaw]}
         components={{
           pre({ children }: any) {
-            const child = isValidElement(children) ? children : null;
+            const kids = Array.isArray(children) ? children : [children];
+            const child = kids.find((c: any) => isValidElement(c)) ?? null;
             if (
               child?.type === "code" &&
               (child.props as any)?.className?.includes("language-mermaid")

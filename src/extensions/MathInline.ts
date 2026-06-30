@@ -48,7 +48,6 @@ export const MathInline = Node.create<MathInlineOptions>({
         "data-latex": node.attrs.latex,
         class: "math-inline",
       }),
-      0,
     ];
   },
 

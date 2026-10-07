@@ -50,8 +50,6 @@ export default function Toolbar({ editor }: ToolbarProps) {
 
         <span className="fmt-group">
           {btn("🔗", async () => {
-            // window.prompt() doesn't work in Tauri's WKWebView — use the
-            // in-app prompt dialog instead.
             const url = await showPrompt({
               title: "Insert link",
               label: "Link URL",
@@ -60,6 +58,15 @@ export default function Toolbar({ editor }: ToolbarProps) {
             });
             if (url) editor.chain().focus().setLink({ href: url }).run();
           }, editor.isActive("link"))}
+          {btn("🖼", async () => {
+            const url = await showPrompt({
+              title: "Insert image",
+              label: "Image URL or path",
+              value: "https://",
+              confirmLabel: "Insert",
+            });
+            if (url) editor.chain().focus().setImage({ src: url }).run();
+          }, editor.isActive("image"))}
           {btn("⊞", () => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run())}
           {btn("—", () => editor.chain().focus().setHorizontalRule().run())}
         </span>

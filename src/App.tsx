@@ -13,15 +13,18 @@ import {
 } from "./lib/ipc";
 import Sidebar from "./components/Sidebar";
 import PromptHost from "./components/PromptHost";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { showPrompt } from "./lib/prompt";
 import { useScrollSync } from "./lib/useScrollSync";
 import { copyText } from "./lib/clipboard";
+import { createBackup } from "./lib/backupManager";
 import type { FileEntry } from "./types";
 import "./App.css";
 
 const WysiwygEditor = lazy(() => import("./components/WysiwygEditor"));
 const EditorPane = lazy(() => import("./components/EditorPane"));
 const PreviewPane = lazy(() => import("./components/PreviewPane"));
+const SearchPanel = lazy(() => import("./components/SearchPanel"));
 
 const LS_VAULT = "noteforge:vaultPath";
 const LS_FILE = "noteforge:filePath";
@@ -45,6 +48,7 @@ function App() {
 
   const [statusText, setStatusText] = useState("No vault open");
   const [exportOpen, setExportOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
   const [autoExpand, setAutoExpand] = useState<string | null>(null);
   const scrollSync = useScrollSync();
@@ -56,6 +60,7 @@ function App() {
   activePathRef.current = activeFilePath;
   const isDirtyRef = useRef(isDirty);
   isDirtyRef.current = isDirty;
+  const lastBackupRef = useRef(0);
 
   const writeFileQuiet = useCallback(async (path: string, content: string) => {
     selfWriteUntil.current = Date.now() + 1500;
@@ -140,6 +145,17 @@ function App() {
     if (exportOpen) document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [exportOpen]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "f") {
+        e.preventDefault();
+        setSearchOpen(!searchOpen);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [searchOpen]);
 
   const saveSession = useCallback(() => {
     try {
@@ -306,6 +322,16 @@ function App() {
     const timer = setTimeout(async () => {
       try {
         await writeFileQuiet(activeFilePath, activeFileContent);
+
+        // Create backup every hour
+        const now = Date.now();
+        if (now - lastBackupRef.current > 3600000) {
+          lastBackupRef.current = now;
+          try {
+            await createBackup(activeFilePath, activeFileContent);
+          } catch {}
+        }
+
         setDirty(false);
         setStatusText("Auto-saved ✓");
         setTimeout(
@@ -316,8 +342,6 @@ function App() {
           1500
         );
       } catch {
-        // Previously swallowed — the note silently stayed dirty and the
-        // status kept claiming everything was fine.
         setStatusText("Auto-save failed — changes kept in editor");
       }
     }, 2000);
@@ -420,21 +444,22 @@ function App() {
   }, [setViewMode, setFileTree, setVaultPath, setActiveFile]);
 
   return (
-    <div className="app">
-      <Sidebar
-        files={fileTree}
-        vaultPath={vaultPath}
-        activeFilePath={activeFilePath}
-        onFileSelect={handleFileSelect}
-        onNewFile={handleNewFile}
-        onNewFolder={handleNewFolder}
-        onOpenVault={handleOpenVault}
-        onRefresh={() => vaultPath && refreshVault(vaultPath)}
-        onRename={handleRename}
-        onDelete={handleDelete}
-        autoExpand={autoExpand}
-      />
-      <div className="main-area">
+    <ErrorBoundary>
+      <div className="app">
+        <Sidebar
+          files={fileTree}
+          vaultPath={vaultPath}
+          activeFilePath={activeFilePath}
+          onFileSelect={handleFileSelect}
+          onNewFile={handleNewFile}
+          onNewFolder={handleNewFolder}
+          onOpenVault={handleOpenVault}
+          onRefresh={() => vaultPath && refreshVault(vaultPath)}
+          onRename={handleRename}
+          onDelete={handleDelete}
+          autoExpand={autoExpand}
+        />
+        <div className="main-area">
         <div className="toolbar">
           <div className="toolbar-left">
             <button
@@ -465,6 +490,15 @@ function App() {
             )}
           </div>
           <div className="toolbar-right">
+            {vaultPath && (
+              <button
+                className="toolbar-btn"
+                onClick={() => setSearchOpen(!searchOpen)}
+                title="Search vault (Cmd+Shift+F)"
+              >
+                🔍
+              </button>
+            )}
             {activeFilePath && (
               <div className="export-wrap" ref={exportRef}>
                 <button className="toolbar-btn" onClick={() => setExportOpen(!exportOpen)}>
@@ -484,6 +518,16 @@ function App() {
             <span className="status-text">{statusText}</span>
           </div>
         </div>
+
+        {searchOpen && vaultPath && (
+          <Suspense fallback={null}>
+            <SearchPanel
+              files={fileTree}
+              onSelectFile={handleFileSelect}
+              onClose={() => setSearchOpen(false)}
+            />
+          </Suspense>
+        )}
 
         <div className="content-area">
           {!activeFilePath ? (
@@ -531,9 +575,10 @@ function App() {
             </Suspense>
           )}
         </div>
+        </div>
+        <PromptHost />
       </div>
-      <PromptHost />
-    </div>
+    </ErrorBoundary>
   );
 }
 

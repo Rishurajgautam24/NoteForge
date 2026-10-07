@@ -9,16 +9,25 @@ import { indentWithTab } from "@codemirror/commands";
 interface EditorPaneProps {
   content: string;
   onChange: (content: string) => void;
+  onScroll?: () => void;
+  registerScroller?: (el: HTMLElement | null) => void;
 }
 
-export default function EditorPane({ content, onChange }: EditorPaneProps) {
+export default function EditorPane({
+  content,
+  onChange,
+  onScroll,
+  registerScroller,
+}: EditorPaneProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
+  const onScrollRef = useRef(onScroll);
   const lastContent = useRef<string | null>(null);
   const skipUpdate = useRef(false);
 
   onChangeRef.current = onChange;
+  onScrollRef.current = onScroll;
 
   useEffect(() => {
     if (!editorRef.current) return;
@@ -36,7 +45,13 @@ export default function EditorPane({ content, onChange }: EditorPaneProps) {
               skipUpdate.current = false;
               return;
             }
-            onChangeRef.current(update.state.doc.toString());
+            const doc = update.state.doc.toString();
+            // Record our own edit so the round-tripped `content` prop is
+            // recognised as self-originated and the sync effect below skips
+            // it. Without this the effect replaces the whole document on every
+            // keystroke, resetting the scroll position to the top.
+            lastContent.current = doc;
+            onChangeRef.current(doc);
           }
         }),
         EditorView.lineWrapping,
@@ -50,11 +65,19 @@ export default function EditorPane({ content, onChange }: EditorPaneProps) {
 
     lastContent.current = content;
 
+    // Expose CodeMirror's own scroll container to the scroll-sync controller.
+    const scroller = view.current.scrollDOM;
+    const scrollHandler = () => onScrollRef.current?.();
+    registerScroller?.(scroller);
+    scroller.addEventListener("scroll", scrollHandler, { passive: true });
+
     return () => {
+      scroller.removeEventListener("scroll", scrollHandler);
+      registerScroller?.(null);
       view.current?.destroy();
       view.current = null;
     };
-  }, []);
+  }, [content, registerScroller]);
 
   useEffect(() => {
     if (!view.current) return;

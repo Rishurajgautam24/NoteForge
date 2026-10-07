@@ -42,6 +42,13 @@ fn build_tree(base: &std::path::Path) -> Vec<FileEntry> {
             continue;
         }
 
+        // Skip VCS/tool noise so listings (and the recursive watcher) stay
+        // clean and fast on real project folders.
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || name == "node_modules" || name == "target" {
+            continue;
+        }
+
         let metadata = match entry.metadata() {
             Ok(m) => m,
             Err(_) => continue,

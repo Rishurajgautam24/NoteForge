@@ -1,3 +1,5 @@
+import { showPrompt } from "../lib/prompt";
+
 interface ToolbarProps {
   editor: any;
 }
@@ -47,8 +49,15 @@ export default function Toolbar({ editor }: ToolbarProps) {
         </span>
 
         <span className="fmt-group">
-          {btn("🔗", () => {
-            const url = prompt("Enter URL:");
+          {btn("🔗", async () => {
+            // window.prompt() doesn't work in Tauri's WKWebView — use the
+            // in-app prompt dialog instead.
+            const url = await showPrompt({
+              title: "Insert link",
+              label: "Link URL",
+              value: "https://",
+              confirmLabel: "Insert",
+            });
             if (url) editor.chain().focus().setLink({ href: url }).run();
           }, editor.isActive("link"))}
           {btn("⊞", () => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run())}

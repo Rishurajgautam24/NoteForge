@@ -853,3 +853,228 @@
   line-height: 1.5;
   overflow-x: auto;
 }
+
+/* Mathcha: click a rendered formula in the preview to copy its LaTeX */
+.preview-pane .katex {
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.1s ease;
+}
+.preview-pane .katex:hover {
+  background: rgba(99, 102, 241, 0.18);
+}
+
+.preview-toast {
+  position: fixed;
+  bottom: 48px;
+  right: 24px;
+  z-index: 50;
+  background: var(--accent, #6366f1);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+/* In-app prompt dialog (window.prompt is unavailable in the WKWebView) */
+.prompt-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 2000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 22vh;
+}
+
+.prompt-dialog {
+  width: 380px;
+  max-width: calc(100vw - 48px);
+  background: var(--toolbar-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.prompt-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-h);
+  margin-bottom: 8px;
+}
+
+.prompt-label {
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 10px;
+  word-break: break-all;
+}
+
+.prompt-input {
+  width: 100%;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-h);
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+  margin-bottom: 14px;
+}
+
+.prompt-input:focus {
+  border-color: var(--accent);
+}
+
+.prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.prompt-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-h);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.prompt-btn:hover {
+  background: var(--hover-bg);
+}
+
+.prompt-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.prompt-btn.primary.danger {
+  background: #ef4444;
+  border-color: #ef4444;
+}
+
+/* Sidebar context menu */
+.ctx-menu {
+  position: fixed;
+  z-index: 1500;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  min-width: 170px;
+  padding: 4px;
+}
+
+.ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-h);
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.ctx-item:hover {
+  background: var(--hover-bg);
+}
+
+.ctx-item.danger {
+  color: #ef4444;
+}
+
+/* PDF/print overlay: rendered in the main document so KaTeX styles and fonts
+   apply, and printed via the webview's native print operation. */
+.nf-print-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  background: #fff;
+  color: #000;
+  overflow: auto;
+}
+
+.nf-print-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #f3f4f6;
+  border-bottom: 1px solid #d1d5db;
+}
+
+.nf-print-toolbar button {
+  padding: 8px 18px;
+  font-size: 13px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #7c3aed;
+  color: #fff;
+}
+
+.nf-print-toolbar button.ghost {
+  background: #e5e7eb;
+  color: #111827;
+}
+
+.nf-print-content {
+  max-width: 8.27in;
+  margin: 0 auto;
+  padding: 40px 48px;
+  background: #fff;
+  color: #000;
+  font-family: Calibri, Helvetica, Arial, sans-serif;
+  font-size: 12pt;
+  line-height: 1.5;
+}
+
+.nf-print-content h1 { font-size: 20pt; margin: 16pt 0 8pt; }
+.nf-print-content h2 { font-size: 16pt; margin: 14pt 0 8pt; }
+.nf-print-content h3 { font-size: 14pt; margin: 12pt 0 6pt; }
+.nf-print-content p { margin: 0 0 8pt; }
+.nf-print-content blockquote {
+  margin: 8pt 0;
+  padding: 4pt 12pt;
+  border-left: 3pt solid #ccc;
+  color: #555;
+}
+.nf-print-content pre {
+  background: #f5f5f5;
+  padding: 8pt;
+  font-size: 10pt;
+  border-radius: 3pt;
+  white-space: pre-wrap;
+}
+.nf-print-content code { background: #f5f5f5; padding: 1pt 4pt; font-size: 10pt; }
+.nf-print-content table { border-collapse: collapse; width: 100%; margin: 8pt 0; }
+.nf-print-content th, .nf-print-content td { border: 1px solid #ccc; padding: 4pt 8pt; text-align: left; }
+.nf-print-content th { background: #f0f0f0; }
+.nf-print-content img { max-width: 100%; }
+.nf-print-content ul, .nf-print-content ol { margin: 4pt 0; padding-left: 24pt; }
+.nf-print-content .mermaid-wrapper { text-align: center; margin: 12pt 0; }
+.nf-print-content .mermaid-wrapper svg { max-width: 100%; height: auto; }
+.nf-print-content .katex-block { text-align: center; margin: 12pt 0; }
+
+@media print {
+  /* Only the overlay prints; the app UI and the toolbar are hidden. */
+  body > *:not(.nf-print-overlay) { display: none !important; }
+  .nf-print-overlay { position: static; overflow: visible; }
+  .nf-print-toolbar { display: none !important; }
+  .nf-print-content { max-width: none; padding: 0; }
+}

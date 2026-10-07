@@ -26,6 +26,10 @@ interface WysiwygEditorProps {
   onChange: (content: string) => void;
 }
 
+// Monotonic id for mermaid.render — ids must be unique per call (see
+// MermaidRenderer) to avoid style collisions and blank diagrams.
+let wysiwygMermaidSeq = 0;
+
 function MathInlineNode(props: any) {
   const latex = props.node.attrs.latex;
   const [editing, setEditing] = useState(false);
@@ -188,18 +192,23 @@ function MermaidNode(props: any) {
     setError(null);
 
     loadMermaid({ theme: "dark" })
-      .then((mermaid) => {
+      .then(async (mermaid) => {
         if (cancelled || !containerRef.current) return;
-        containerRef.current.innerHTML = "";
-        const sourceDiv = document.createElement("div");
-        sourceDiv.className = "mermaid";
-        sourceDiv.textContent = chart;
-        containerRef.current.appendChild(sourceDiv);
-        return mermaid.run({ nodes: [sourceDiv] });
+        const id = `nf-wysiwyg-mermaid-${wysiwygMermaidSeq++}`;
+        try {
+          const { svg, bindFunctions } = await mermaid.render(id, chart);
+          if (cancelled || !containerRef.current) return;
+          containerRef.current.innerHTML = svg;
+          bindFunctions?.(containerRef.current);
+        } catch (e) {
+          document.getElementById(id)?.remove();
+          document.getElementById(`d${id}`)?.remove();
+          throw e;
+        }
       })
       .catch((e) => {
         if (!cancelled) {
-          setError(String(e));
+          setError(e?.message ?? String(e));
         }
       });
 

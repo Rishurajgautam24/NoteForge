@@ -16,6 +16,7 @@ import {
   convertInchesToTwip,
   type ParagraphChild,
 } from "docx";
+import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import {
@@ -24,6 +25,7 @@ import {
   type ExtractedMarkdownArtifacts,
 } from "./markdownArtifacts";
 import { loadKatex, loadMermaid } from "./renderEngines";
+import { markdownToLatex } from "./latex";
 
 const DOCX_MAX_IMAGE_WIDTH = 520;
 const DOCX_MAX_INLINE_MATH_WIDTH = 240;
@@ -100,6 +102,85 @@ export async function exportMarkdown(content: string, defaultName: string) {
   });
   if (!path) return;
   await writeTextFile(path, content);
+}
+
+// Render the .tex for a note and rasterise every Mermaid diagram to a PNG so it
+// can be embedded on Overleaf. The diagram PNGs are returned alongside the .tex
+// (each referenced via \includegraphics) rather than dropped — the old copy
+// path only emitted the diagram *source* as a verbatim comment, which is what
+// "Overleaf export skips mermaid" meant.
+async function buildLatexWithFigures(
+  markdown: string,
+  base: string
+): Promise<{ tex: string; images: Array<{ name: string; data: Uint8Array }> }> {
+  const { mermaidCharts } = extractMarkdownArtifacts(markdown);
+  const figures: string[] = [];
+  const images: Array<{ name: string; data: Uint8Array }> = [];
+
+  if (mermaidCharts.length > 0) {
+    const mermaid = await loadMermaid({ theme: "default" });
+    for (let i = 0; i < mermaidCharts.length; i++) {
+      const figName = `${base}-fig-${i + 1}.png`;
+      try {
+        const { svg } = await mermaid.render(
+          `mermaid-latex-${i}-${crypto.randomUUID()}`,
+          mermaidCharts[i]
+        );
+        const { width, height } = getSvgDimensions(svg);
+        const scaled = scaleToFit(width, height, 900);
+        const data = await rasterizeSvgToPng(svg, scaled.width, scaled.height);
+        figures.push(figName);
+        images.push({ name: figName, data });
+      } catch {
+        // Unrenderable diagram: empty entry makes markdownToLatex fall back to
+        // a verbatim listing of the source instead of a broken \includegraphics.
+        figures.push("");
+      }
+    }
+  }
+
+  const tex = markdownToLatex(markdown, { mermaidFigures: figures });
+  return { tex, images };
+}
+
+// Overleaf-oriented export: writes a .tex plus one PNG per Mermaid diagram
+// (same directory, referenced via \includegraphics).
+export async function exportLatex(markdown: string, defaultName: string) {
+  const base = defaultName.replace(/\.(md|markdown|tex)$/i, "");
+  const { tex, images } = await buildLatexWithFigures(markdown, base);
+  const path = await save({
+    defaultPath: `${base}.tex`,
+    filters: [{ name: "LaTeX", extensions: ["tex"] }],
+  });
+  if (!path) return;
+  await writeTextFile(path, tex);
+
+  if (images.length > 0) {
+    const sep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+    const dir = sep >= 0 ? path.slice(0, sep + 1) : "";
+    for (const img of images) {
+      await writeFile(dir + img.name, img.data);
+    }
+  }
+}
+
+// "Copy as LaTeX (Overleaf)" path. A standalone .tex can't render Mermaid from
+// source under pdflatex, so we rasterise each diagram to a PNG and write the
+// figures next to the active note; the copied .tex references them via
+// \includegraphics. The user uploads the PNGs alongside the .tex on Overleaf.
+export async function copyLatexWithFigures(
+  markdown: string,
+  base: string,
+  dir: string
+): Promise<{ tex: string; figureCount: number }> {
+  const { tex, images } = await buildLatexWithFigures(markdown, base);
+  if (images.length > 0 && dir) {
+    const baseDir = dir.endsWith("/") || dir.endsWith("\\") ? dir : `${dir}/`;
+    for (const img of images) {
+      await writeFile(baseDir + img.name, img.data);
+    }
+  }
+  return { tex, figureCount: images.length };
 }
 
 export async function exportDocx(markdown: string, defaultName: string) {
@@ -223,100 +304,59 @@ export async function exportPdf(markdown: string) {
     }
   }
 
-  const printFrame = document.createElement("iframe");
-  printFrame.style.position = "fixed";
-  printFrame.style.right = "0";
-  printFrame.style.top = "0";
-  printFrame.style.width = "100%";
-  printFrame.style.height = "100%";
-  printFrame.style.border = "none";
-  printFrame.style.zIndex = "9999";
-  printFrame.style.backgroundColor = "#fff";
-  document.body.appendChild(printFrame);
+  // The old implementation rendered into a same-origin srcdoc iframe and
+  // called frameWin.print() — a silent no-op in Tauri's WKWebView, so both the
+  // Print and Close buttons did nothing. Instead we render a light-themed
+  // overlay in the main document (KaTeX CSS/fonts from the app apply) and hand
+  // printing to the webview's native print operation.
+  document.querySelectorAll(".nf-print-overlay").forEach((el) => el.remove());
 
-  const iDoc = printFrame.contentWindow?.document;
-  if (!iDoc) {
-    document.body.removeChild(printFrame);
-    throw new Error("Could not create print preview");
-  }
+  const overlay = document.createElement("div");
+  overlay.className = "nf-print-overlay";
 
+  const toolbar = document.createElement("div");
+  toolbar.className = "nf-print-toolbar";
+
+  const content = document.createElement("div");
+  content.className = "nf-print-content";
+  content.innerHTML = html;
+
+  let printing = false;
+  const doPrint = async () => {
+    if (printing) return;
+    printing = true;
+    try {
+      await invoke("plugin:webview|print");
+    } catch (e) {
+      console.error("Print failed:", e);
+    } finally {
+      printing = false;
+    }
+  };
+
+  const onKeydown = (event: KeyboardEvent) => {
+    if (event.key === "Escape") cleanup();
+  };
   const cleanup = () => {
-    if (printFrame.parentNode) {
-      printFrame.parentNode.removeChild(printFrame);
-    }
-    document.removeEventListener("keydown", handleKeydown);
+    document.removeEventListener("keydown", onKeydown);
+    overlay.remove();
   };
 
-  const handleKeydown = (event: KeyboardEvent) => {
-    if (event.key === "Escape") {
-      cleanup();
-    }
-  };
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "ghost";
+  closeBtn.type = "button";
+  closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", cleanup);
 
-  const katexCssText = escapeStyleText(getKatexCssText());
-  const iframeHtml = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>${katexCssText}</style>
-<style>
-  @page { size: A4; margin: 1in; }
-  html, body { background: #fff !important; color: #000 !important; }
-  body { margin: 0; font-family: 'Calibri', 'Helvetica', Arial, sans-serif; font-size: 12pt; line-height: 1.5; color: #000; padding: 40px; }
-  h1 { font-size: 20pt; margin: 16pt 0 8pt; }
-  h2 { font-size: 16pt; margin: 14pt 0 8pt; }
-  h3 { font-size: 14pt; margin: 12pt 0 6pt; }
-  p { margin: 0 0 8pt; }
-  blockquote { margin: 8pt 0; padding: 4pt 12pt; border-left: 3px solid #ccc; color: #555; }
-  pre { background: #f5f5f5; padding: 8pt; font-size: 10pt; border-radius: 3px; white-space: pre-wrap; }
-  code { background: #f5f5f5; padding: 1pt 4pt; font-size: 10pt; }
-  table { border-collapse: collapse; width: 100%; margin: 8pt 0; }
-  th, td { border: 1px solid #ccc; padding: 4pt 8pt; text-align: left; }
-  th { background: #f0f0f0; }
-  img { max-width: 100%; }
-  ul, ol { margin: 4pt 0; padding-left: 24pt; }
-  .mermaid-wrapper { text-align: center; margin: 12pt 0; }
-  .mermaid-wrapper svg { max-width: 100%; height: auto; }
-  .katex-block { text-align: center; margin: 12pt 0; }
+  const printBtn = document.createElement("button");
+  printBtn.type = "button";
+  printBtn.textContent = "Print / Save as PDF";
+  printBtn.addEventListener("click", doPrint);
 
-  @media print { body { padding: 0; } .print-btn, .close-btn { display: none; } }
-  .print-btn { position: fixed; bottom: 24px; right: 24px; z-index: 10000; }
-  .print-btn button { padding: 10px 24px; font-size: 14px; background: #c084fc; color: #000; border: none; border-radius: 6px; cursor: pointer; }
-  .print-btn button:hover { background: #a855f7; }
-  .close-btn { position: fixed; top: 16px; right: 16px; z-index: 10000; }
-  .close-btn button { padding: 6px 16px; font-size: 13px; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-</style>
-</head>
-<body>
-  <div class="close-btn"><button type="button" data-export-close>Close</button></div>
-  <div class="print-btn"><button type="button" data-export-print>Print / Save as PDF</button></div>
-  <div id="content">${html}</div>
-</body>
-</html>`;
-
-  document.addEventListener("keydown", handleKeydown);
-
-  const bindFrameControls = () => {
-    const frameDoc = printFrame.contentWindow?.document;
-    const frameWin = printFrame.contentWindow;
-    if (!frameDoc) {
-      return;
-    }
-
-    const closeButton =
-      frameDoc.querySelector<HTMLButtonElement>("[data-export-close]");
-    const printButton =
-      frameDoc.querySelector<HTMLButtonElement>("[data-export-print]");
-
-    closeButton?.addEventListener("click", cleanup);
-    printButton?.addEventListener("click", () => {
-      frameWin?.focus();
-      frameWin?.print();
-    });
-  };
-
-  printFrame.addEventListener("load", bindFrameControls, { once: true });
-  printFrame.srcdoc = iframeHtml;
+  toolbar.append(closeBtn, printBtn);
+  overlay.append(toolbar, content);
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", onKeydown);
 }
 
 function buildDocxItems(
@@ -948,10 +988,6 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
-}
-
-function escapeStyleText(value: string): string {
-  return value.replace(/<\/style/gi, "<\\/style");
 }
 
 function absolutizeCssUrls(cssText: string, baseHref: string): string {

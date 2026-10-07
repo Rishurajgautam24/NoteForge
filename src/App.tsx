@@ -18,6 +18,8 @@ import { showPrompt } from "./lib/prompt";
 import { useScrollSync } from "./lib/useScrollSync";
 import { copyText } from "./lib/clipboard";
 import { createBackup } from "./lib/backupManager";
+import { initializeTheme, toggleTheme } from "./lib/themeManager";
+import { saveRecentFile, calculateWordCount } from "./lib/recentFiles";
 import type { FileEntry } from "./types";
 import "./App.css";
 
@@ -25,6 +27,8 @@ const WysiwygEditor = lazy(() => import("./components/WysiwygEditor"));
 const EditorPane = lazy(() => import("./components/EditorPane"));
 const PreviewPane = lazy(() => import("./components/PreviewPane"));
 const SearchPanel = lazy(() => import("./components/SearchPanel"));
+const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
+const KeyboardShortcuts = lazy(() => import("./components/KeyboardShortcuts"));
 
 const LS_VAULT = "noteforge:vaultPath";
 const LS_FILE = "noteforge:filePath";
@@ -49,9 +53,16 @@ function App() {
   const [statusText, setStatusText] = useState("No vault open");
   const [exportOpen, setExportOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
   const [autoExpand, setAutoExpand] = useState<string | null>(null);
   const scrollSync = useScrollSync();
+
+  // Initialize theme on mount
+  useEffect(() => {
+    initializeTheme();
+  }, []);
 
   // Guard so vault-watch events triggered by our own writes are ignored, and
   // refs so the watch callback never acts on stale active-file state.
@@ -152,10 +163,22 @@ function App() {
         e.preventDefault();
         setSearchOpen(!searchOpen);
       }
+      if ((e.metaKey || e.ctrlKey) && e.key === "l") {
+        e.preventDefault();
+        toggleTheme();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        e.preventDefault();
+        setSettingsOpen(!settingsOpen);
+      }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "?") {
+        e.preventDefault();
+        setShortcutsOpen(!shortcutsOpen);
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [searchOpen]);
+  }, [searchOpen, settingsOpen, shortcutsOpen]);
 
   const saveSession = useCallback(() => {
     try {
@@ -200,6 +223,13 @@ function App() {
       try {
         const content = await readFile(path);
         setActiveFile(path, content);
+        // Track recent file
+        saveRecentFile({
+          path,
+          name: path.split("/").pop() || path,
+          timestamp: Date.now(),
+          wordCount: calculateWordCount(content),
+        });
         setStatusText(`Editing: ${path.split("/").pop()}`);
       } catch (e) {
         setStatusText(`Error reading file: ${e}`);
@@ -499,6 +529,27 @@ function App() {
                 🔍
               </button>
             )}
+            <button
+              className="toolbar-btn theme-toggle-btn"
+              onClick={() => toggleTheme()}
+              title="Toggle light/dark mode (Cmd+L)"
+            >
+              ☀️
+            </button>
+            <button
+              className="toolbar-btn"
+              onClick={() => setSettingsOpen(!settingsOpen)}
+              title="Settings (Cmd+,)"
+            >
+              ⚙️
+            </button>
+            <button
+              className="toolbar-btn"
+              onClick={() => setShortcutsOpen(!shortcutsOpen)}
+              title="Keyboard shortcuts (Cmd+Shift+?)"
+            >
+              ?
+            </button>
             {activeFilePath && (
               <div className="export-wrap" ref={exportRef}>
                 <button className="toolbar-btn" onClick={() => setExportOpen(!exportOpen)}>
@@ -515,7 +566,25 @@ function App() {
                 )}
               </div>
             )}
-            <span className="status-text">{statusText}</span>
+            <div className="status-bar">
+              {activeFilePath && activeFileContent && (
+                <div className="status-bar-extended">
+                  <span className="status-stat">
+                    <span className="status-stat-label">Words:</span>
+                    <span className="status-stat-value">
+                      {calculateWordCount(activeFileContent).toLocaleString()}
+                    </span>
+                  </span>
+                  <span className="status-stat">
+                    <span className="status-stat-label">Chars:</span>
+                    <span className="status-stat-value">
+                      {activeFileContent.length.toLocaleString()}
+                    </span>
+                  </span>
+                </div>
+              )}
+              <span className="status-text">{statusText}</span>
+            </div>
           </div>
         </div>
 
@@ -526,6 +595,18 @@ function App() {
               onSelectFile={handleFileSelect}
               onClose={() => setSearchOpen(false)}
             />
+          </Suspense>
+        )}
+
+        {settingsOpen && (
+          <Suspense fallback={null}>
+            <SettingsPanel onClose={() => setSettingsOpen(false)} />
+          </Suspense>
+        )}
+
+        {shortcutsOpen && (
+          <Suspense fallback={null}>
+            <KeyboardShortcuts onClose={() => setShortcutsOpen(false)} />
           </Suspense>
         )}
 
